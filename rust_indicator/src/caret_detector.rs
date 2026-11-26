@@ -18,6 +18,9 @@ use windows::core::Interface;
 /// MSAA OBJID_CARET 常量
 const OBJID_CARET: u32 = 0xFFFFFFF8u32;
 
+/// accState 状态位：不可见
+const STATE_SYSTEM_INVISIBLE: u32 = 0x8000;
+
 /// IID_IAccessible GUID: {618736e0-3c3d-11cf-810c-00aa00389b71}
 const IID_IACCESSIBLE: u128 = 0x618736e0_3c3d_11cf_810c_00aa00389b71;
 
@@ -198,12 +201,20 @@ impl CaretDetector {
 
             match acc.accLocation(&mut x, &mut y, &mut w, &mut h, &var_child) {
                 Ok(_) => {
-                    if x != 0 || y != 0 {
-                        // 有选区时 caret 对象矩形覆盖整个选区（光标在选区末尾），取右缘
-                        return Some((x + w, y, h));
-                    } else {
-                        None
+                    // Chromium（VS Code/Electron）焦点离开文本后此对象仍报旧位置，
+                    // 但会把自身标成 INVISIBLE——以状态位判定 caret 是否真的存在
+                    let invisible = acc
+                        .get_accState(&var_child)
+                        .ok()
+                        .and_then(|v| u32::try_from(&v).ok())
+                        .unwrap_or(0)
+                        & STATE_SYSTEM_INVISIBLE
+                        != 0;
+                    if invisible || (x == 0 && y == 0) {
+                        return None;
                     }
+                    // 有选区时 caret 对象矩形覆盖整个选区（光标在选区末尾），取右缘
+                    Some((x + w, y, h))
                 }
                 Err(_) => None,
             }
