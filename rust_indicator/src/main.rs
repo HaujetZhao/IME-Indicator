@@ -30,11 +30,22 @@ fn main() {
 
     // 设置运行状态
     let running = Arc::new(AtomicBool::new(true));
-    let r_clone = running.clone();
+    let shared = Arc::new(SharedState {
+        running: running.clone(),
+        chinese: AtomicBool::new(false),
+        mouse_active: AtomicBool::new(false),
+    });
 
-    // 在子线程启动检测逻辑
+    // 鼠标跟随线程：轻量循环（GetCursorPos + 重绘），与阻塞型检测隔离
+    if config::mouse_enable() {
+        let s = shared.clone();
+        thread::spawn(move || run_mouse_follower(s));
+    }
+
+    // 检测线程：caret 检测、状态判断、IME 读写（内含可能阻塞的跨进程 COM）
+    let s_clone = shared.clone();
     thread::spawn(move || {
-        run_detector_loop(r_clone);
+        run_detector_loop(s_clone);
     });
 
     // 主线程：根据配置决定是否创建系统托盘
@@ -93,12 +104,56 @@ fn main() {
     }
 }
 
-fn run_detector_loop(running: Arc<AtomicBool>) {
+/// 跟随线程与检测线程之间共享的状态
+struct SharedState {
+    running: Arc<AtomicBool>,
+    /// 当前中文态（颜色用）
+    chinese: AtomicBool,
+    /// 鼠标指示器是否应显示
+    mouse_active: AtomicBool,
+}
+
+fn run_mouse_follower(shared: Arc<SharedState>) {
+    // 鼠标 overlay 归跟随线程所有：跟随是轻活（GetCursorPos + 重绘，微秒级），
+    // 不与检测线程（跨进程 COM，可能被目标程序拖住几百毫秒）绑在一个线程里，
+    // 否则点击等焦点切换瞬间 COM 阻塞会把跟随一起冻住
+    let overlay = IndicatorOverlay::new(
+        "Mouse",
+        config::mouse_size(),
+        config::mouse_color_cn(),
+        config::mouse_color_en(),
+        config::mouse_offset_x(),
+        config::mouse_offset_y(),
+    );
+    let mut shown = false;
+    while shared.running.load(Ordering::SeqCst) {
+        let active = shared.mouse_active.load(Ordering::SeqCst);
+        if active != shown {
+            shown = active;
+            if active {
+                overlay.show();
+            } else {
+                overlay.hide();
+            }
+        }
+        if active {
+            let mut pt = POINT::default();
+            unsafe {
+                if GetCursorPos(&mut pt).is_ok() {
+                    overlay.update(pt.x, pt.y, shared.chinese.load(Ordering::SeqCst), 0);
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(config::track_poll_interval_ms()));
+    }
+}
+
+fn run_detector_loop(shared: Arc<SharedState>) {
     // 初始化检测器
     let mut caret_detector = CaretDetector::new();
     let cursor_detector = CursorDetector::new(config::mouse_target_cursors());
 
-    // 初始化悬浮窗
+    // caret 悬浮窗归检测线程所有
     let caret_overlay = if config::caret_enable() {
         Some(IndicatorOverlay::new(
             "Caret",
@@ -112,37 +167,23 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
         None
     };
 
-    let mouse_overlay = if config::mouse_enable() {
-        Some(IndicatorOverlay::new(
-            "Mouse",
-            config::mouse_size(),
-            config::mouse_color_cn(),
-            config::mouse_color_en(),
-            config::mouse_offset_x(),
-            config::mouse_offset_y(),
-        ))
-    } else {
-        None
-    };
-
     let state_interval = Duration::from_millis(config::state_poll_interval_ms());
     let track_interval = Duration::from_millis(config::track_poll_interval_ms());
 
     let mut last_state_check_time = Instant::now();
-    let mut chinese_mode = false;
     let mut caret_active = false;
-    let mut mouse_active = false;
     let mut last_in_text = false;
     // A 段刚检测完的光标位置，B 段直接复用，避免同一拍重跑检测管线
     let mut fresh_caret_pos: Option<CaretPos> = None;
 
     // 主线程负责消息循环，子线程负责检测
-    while running.load(Ordering::SeqCst) {
+    while shared.running.load(Ordering::SeqCst) {
         let now = Instant::now();
 
         // A. 状态检测 (100ms)
         if now.duration_since(last_state_check_time) >= state_interval {
-            chinese_mode = is_chinese_mode();
+            let chinese_mode = is_chinese_mode();
+            shared.chinese.store(chinese_mode, Ordering::SeqCst);
 
             let auto = ime_switcher::auto_enabled();
             let caret_pos = if config::caret_enable() || auto {
@@ -159,7 +200,7 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
             if auto && in_text != last_in_text {
                 last_in_text = in_text;
                 ime_switcher::apply(in_text);
-                chinese_mode = in_text;
+                shared.chinese.store(in_text, Ordering::SeqCst);
             }
 
             // Caret 状态判断
@@ -180,46 +221,24 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
                 }
             }
 
-            // Mouse 状态判断
+            // Mouse 状态判断（显示与否由跟随线程按共享状态自行执行）
             if config::mouse_enable() {
-                if let Some(ref overlay) = mouse_overlay {
-                    let target_cursor = cursor_detector.should_show_indicator();
-                    let should_mouse = target_cursor && (chinese_mode || config::mouse_show_en());
-                    if should_mouse != mouse_active {
-                        mouse_active = should_mouse;
-                        if mouse_active {
-                            overlay.show();
-                        } else {
-                            overlay.hide();
-                        }
-                    }
-                }
+                let target_cursor = cursor_detector.should_show_indicator();
+                let should_mouse = target_cursor
+                    && (shared.chinese.load(Ordering::SeqCst) || config::mouse_show_en());
+                shared.mouse_active.store(should_mouse, Ordering::SeqCst);
             }
 
             last_state_check_time = now;
             fresh_caret_pos = caret_pos;
         }
 
-        // B. 坐标追踪
-
-        // 1. 追踪文本光标（优先复用 A 段同拍结果）
+        // B. 追踪文本光标（优先复用 A 段同拍结果）
         if config::caret_enable() && caret_active {
             if let Some(ref overlay) = caret_overlay {
                 let pos = fresh_caret_pos.take().or_else(|| caret_detector.get_caret_pos());
                 if let Some((x, y, h)) = pos {
-                    overlay.update(x, y, chinese_mode, h);
-                }
-            }
-        }
-
-        // 2. 追踪鼠标
-        if config::mouse_enable() && mouse_active {
-            if let Some(ref overlay) = mouse_overlay {
-                let mut pt = POINT::default();
-                unsafe {
-                    if GetCursorPos(&mut pt).is_ok() {
-                        overlay.update(pt.x, pt.y, chinese_mode, 0);
-                    }
+                    overlay.update(x, y, shared.chinese.load(Ordering::SeqCst), h);
                 }
             }
         }
