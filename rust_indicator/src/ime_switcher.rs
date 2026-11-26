@@ -78,6 +78,35 @@ pub fn app_allows() -> bool {
     crate::config::autoswitch_allows(&exe)
 }
 
+/// 前台 IME 是否处于开启状态（open=1）。
+/// ENG 美式键盘等纯键盘布局 open 恒为 0——此时不应自动切换（实测 ImmIsIME 区分不了）。
+pub fn ime_open() -> bool {
+    unsafe {
+        use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_IME_CONTROL,
+        };
+        const IMC_GETOPENSTATUS: usize = 0x5;
+
+        let hwnd = focused_window();
+        let ime_wnd = ImmGetDefaultIMEWnd(hwnd);
+        if ime_wnd.0.is_null() {
+            return false;
+        }
+        let mut result: usize = 0;
+        let ok = SendMessageTimeoutW(
+            ime_wnd,
+            WM_IME_CONTROL,
+            WPARAM(IMC_GETOPENSTATUS),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG,
+            300,
+            Some(&mut result),
+        );
+        ok.0 != 0 && result != 0
+    }
+}
+
 /// 获取当前焦点窗口（与 ime_detector::get_focused_window 同逻辑）
 fn focused_window() -> HWND {
     unsafe {
@@ -123,10 +152,13 @@ fn ime_ctl(hwnd: HWND, imc: usize, value: usize) -> Option<usize> {
 }
 
 fn press(hwnd: HWND, chinese: bool) {
-    let want = if chinese { 1 } else { 0 };
-    ime_ctl(hwnd, IMC_SETOPENSTATUS, want);
+    // 中文：open+conv 一起压（新版微软拼音会忽略单发 SETOPENSTATUS(1)，缺一不可）；
+    // 英文：只压 conv 回非中文模式（Shift 的语义），open 不动，不把输入法整个关掉
+    if chinese {
+        ime_ctl(hwnd, IMC_SETOPENSTATUS, 1);
+    }
     let conv = ime_ctl(hwnd, IMC_GETCONVERSIONMODE, 0).unwrap_or(0);
-    let mode = if chinese { (conv & !3) | 1 } else { 0 };
+    let mode = if chinese { (conv & !3) | 1 } else { conv & !3 };
     ime_ctl(hwnd, IMC_SETCONVERSIONMODE, mode);
 }
 
