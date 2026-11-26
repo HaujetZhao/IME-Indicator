@@ -35,6 +35,13 @@ pub struct Config {
     pub mouse_offset_y: i32,
     pub mouse_show_en: bool,
     pub mouse_target_cursors: Vec<u32>,
+
+    /// 自动切换：启动时开关（运行时由托盘菜单切换）
+    pub autoswitch_enable: bool,
+    /// 匹配列表（通配符），空 = 不匹配任何程序
+    pub autoswitch_match: Vec<String>,
+    /// 拒绝列表（通配符），命中则该程序不自动切换
+    pub autoswitch_deny: Vec<String>,
 }
 
 impl Default for Config {
@@ -62,6 +69,10 @@ impl Default for Config {
             mouse_offset_y: 18,
             mouse_show_en: true,
             mouse_target_cursors: vec![32513, 32512],
+
+            autoswitch_enable: true,
+            autoswitch_match: vec!["*".to_string()],
+            autoswitch_deny: Vec::new(),
         }
     }
 }
@@ -192,6 +203,21 @@ fn load_config() -> Config {
             config.mouse_target_cursors = v.trim_matches(|c| c == '[' || c == ']')
                 .split(',').filter_map(|s| s.trim().parse().ok()).collect();
         }
+
+        if let Some(v) = get("autoswitch", "enable") {
+            match v.as_str() {
+                "true" => config.autoswitch_enable = true,
+                "false" => config.autoswitch_enable = false,
+                _ => {}
+            }
+        }
+        for (key, dest) in [("match", &mut config.autoswitch_match), ("deny", &mut config.autoswitch_deny)] {
+            if let Some(v) = get("autoswitch", key) {
+                *dest = v.trim_matches(|c| c == '[' || c == ']')
+                    .split(',').map(|s| s.trim().trim_matches('"').to_lowercase())
+                    .filter(|s| !s.is_empty()).collect();
+            }
+        }
     }
     config
 }
@@ -231,6 +257,11 @@ offset_y = 18
 show_en = true              # 英文状态下是否显示
 track_interval_ms = 10
 target_cursors = [32513, 32512]  # I-Beam, Normal
+
+[autoswitch]
+enable = true   # 自动切换初始开关（运行时可用托盘菜单切换）
+match = ["*"]   # 匹配列表，支持通配符（* 任意段，? 单字符）
+deny = []       # 拒绝列表，同样支持通配符；命中则该程序不做自动切换
 "##.to_string()
 }
 
@@ -290,6 +321,33 @@ pub fn mouse_offset_x() -> i32 { get().mouse_offset_x }
 pub fn mouse_offset_y() -> i32 { get().mouse_offset_y }
 pub fn mouse_show_en() -> bool { get().mouse_show_en }
 pub fn mouse_target_cursors() -> &'static [u32] { &get().mouse_target_cursors }
+pub fn autoswitch_enable() -> bool { get().autoswitch_enable }
+pub fn autoswitch_match() -> &'static [String] { &get().autoswitch_match }
+pub fn autoswitch_deny() -> &'static [String] { &get().autoswitch_deny }
+
+/// 通配符匹配：* 任意段，? 单字符，大小写不敏感
+pub fn glob_match(pattern: &str, text: &str) -> bool {
+    fn rec(p: &[u8], t: &[u8]) -> bool {
+        match p.first() {
+            None => t.is_empty(),
+            Some(b'*') => (0..=t.len()).any(|i| rec(&p[1..], &t[i..])),
+            Some(b'?') => !t.is_empty() && rec(&p[1..], &t[1..]),
+            Some(&c) => t.first() == Some(&c) && rec(&p[1..], &t[1..]),
+        }
+    }
+    rec(pattern.to_lowercase().as_bytes(), text.to_lowercase().as_bytes())
+}
+
+/// 自动切换的按程序过滤（纯逻辑）：进程名需命中 match（空列表 = 不匹配任何程序）且不命中 deny
+pub fn list_allows(exe: &str, match_list: &[String], deny_list: &[String]) -> bool {
+    !deny_list.iter().any(|p| glob_match(p, exe))
+        && match_list.iter().any(|p| glob_match(p, exe))
+}
+
+/// 按当前配置过滤前台程序
+pub fn autoswitch_allows(exe: &str) -> bool {
+    list_allows(exe, autoswitch_match(), autoswitch_deny())
+}
 
 #[cfg(test)]
 mod tests {
@@ -303,11 +361,29 @@ mod tests {
         poll.insert("state_interval_ms".to_string(), "200".to_string());
         user.insert("poll".to_string(), poll);
         let (merged, missing) = merge_template(&user);
-        assert_eq!(missing, 19); // 模板共 20 个键，补 19 个默认
+        assert_eq!(missing, 22); // 模板共 23 个键，补 22 个默认
         // 用户已有值保留
         assert!(merged.contains("state_interval_ms = 200"));
         // 缺失键补默认
         assert!(merged.contains("track_interval_ms = 10"));
         assert!(merged.contains("enable = true               # 是否显示托盘图标"));
+    }
+
+    #[test]
+    fn test_glob_and_list_allows() {
+        assert!(glob_match("*.exe", "photoshop.exe"));
+        assert!(glob_match("windows*.exe", "WindowsTerminal.exe"));
+        assert!(!glob_match("*.exe", "photoshop"));
+        assert!(glob_match("notepad.ex?", "notepad.exe"));
+
+        let m = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // 空 match = 不匹配任何程序（要通配就显式写 "*"）
+        assert!(!list_allows("anything.exe", &[], &[]));
+        assert!(list_allows("anything.exe", &m(&["*"]), &[]));
+        // 白名单
+        assert!(list_allows("notepad.exe", &m(&["*.exe"]), &[]));
+        assert!(!list_allows("chrome.exe", &m(&["notepad.exe"]), &[]));
+        // 拒绝优先于匹配
+        assert!(!list_allows("photoshop.exe", &m(&["*.exe"]), &m(&["photo*"])));
     }
 }

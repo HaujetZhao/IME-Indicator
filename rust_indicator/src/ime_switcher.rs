@@ -21,6 +21,11 @@ const IMC_SETOPENSTATUS: usize = 0x6;
 /// 自动切换开关（托盘菜单切换，检测循环读取）
 static AUTO: AtomicBool = AtomicBool::new(false);
 
+/// 程序启动时按配置设定初始状态（运行时的开关仍归托盘菜单管）
+pub fn init(enable: bool) {
+    AUTO.store(enable, Ordering::SeqCst);
+}
+
 pub fn auto_enabled() -> bool {
     AUTO.load(Ordering::SeqCst)
 }
@@ -29,6 +34,48 @@ pub fn toggle_auto() -> bool {
     let v = !auto_enabled();
     AUTO.store(v, Ordering::SeqCst);
     v
+}
+
+/// 前台进程名（按前台窗口句柄缓存，每次前台切换才真正查一次）
+fn foreground_exe() -> Option<String> {
+    static CACHE: std::sync::Mutex<(usize, Option<String>)> = std::sync::Mutex::new((0, None));
+    unsafe {
+        use windows::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+        let hwnd = GetForegroundWindow();
+        let key = hwnd.0 as usize;
+        let mut cache = CACHE.lock().unwrap();
+        if key != 0 && cache.0 == key {
+            return cache.1.clone();
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let name = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok().and_then(|h| {
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len)
+                .is_ok();
+            let _ = windows::Win32::Foundation::CloseHandle(h);
+            ok.then(|| {
+                let full = String::from_utf16_lossy(&buf[..len as usize]);
+                full.rsplit('\\').next().unwrap_or(&full).to_lowercase()
+            })
+        });
+        if key != 0 {
+            *cache = (key, name.clone());
+        }
+        name
+    }
+}
+
+/// 前台程序是否允许自动切换（按配置的 match/deny 过滤；查不到进程名时默认允许）
+pub fn app_allows() -> bool {
+    let Some(exe) = foreground_exe() else { return true };
+    crate::config::autoswitch_allows(&exe)
 }
 
 /// 获取当前焦点窗口（与 ime_detector::get_focused_window 同逻辑）

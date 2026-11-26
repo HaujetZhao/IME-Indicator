@@ -28,6 +28,9 @@ fn main() {
     // 配置高 DPI 感知
     set_dpi_awareness();
 
+    // 自动切换的初始开关来自配置（运行时由托盘菜单切换）
+    ime_switcher::init(config::autoswitch_enable());
+
     // 设置运行状态
     let running = Arc::new(AtomicBool::new(true));
     let shared = Arc::new(SharedState {
@@ -187,6 +190,7 @@ fn run_detector_loop(shared: Arc<SharedState>) {
             shared.chinese.store(chinese_mode, Ordering::SeqCst);
 
             let auto = ime_switcher::auto_enabled();
+            let app_ok = auto && ime_switcher::app_allows();
             let caret_pos = if config::caret_enable() || auto {
                 caret_detector.get_caret_pos()
             } else {
@@ -194,14 +198,17 @@ fn run_detector_loop(shared: Arc<SharedState>) {
             };
             // 只读文档判定（UIA COM）：有插入符才算一次，两处判断共用
             let readonly_doc = caret_pos.is_some() && caret_detector.focus_is_readonly_document();
-            let in_text = auto && caret_pos.is_some() && !readonly_doc;
+            let in_text = app_ok && caret_pos.is_some() && !readonly_doc;
 
             // 自动切换：进入输入框切中文，离开切英文。
-            // 只在翻转时动作一次，不持续强制——避免顶掉用户在输入框里的手动 Shift 切换
-            if auto && in_text != last_in_text {
+            // 只在翻转时动作一次，不持续强制——避免顶掉用户在输入框里的手动 Shift 切换。
+            // 受限程序（match/deny 拒绝）里不动作，只静默复位，完全不碰它的输入法
+            if in_text != last_in_text {
                 last_in_text = in_text;
-                ime_switcher::apply(in_text);
-                shared.chinese.store(in_text, Ordering::SeqCst);
+                if app_ok {
+                    ime_switcher::apply(in_text);
+                    shared.chinese.store(in_text, Ordering::SeqCst);
+                }
             }
 
             // Caret 状态判断
