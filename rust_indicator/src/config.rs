@@ -12,7 +12,9 @@ use std::sync::OnceLock;
 
 pub struct Config {
     pub poll_state_interval_ms: u64,
-    pub poll_track_interval_ms: u64,
+    pub poll_mouse_track_interval_ms: u64,
+    /// caret 位置追踪间隔；VS Code 等走 MSAA COM，是检测线程的开销大头，可放宽
+    pub poll_caret_track_interval_ms: u64,
 
     pub tray_enable: bool,
 
@@ -39,7 +41,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             poll_state_interval_ms: 100,
-            poll_track_interval_ms: 10,
+            poll_mouse_track_interval_ms: 10,
+            poll_caret_track_interval_ms: 50,
             tray_enable: true,
             caret_enable: true,
             caret_color_cn: parse_color("#FF7800dd"),
@@ -129,7 +132,8 @@ fn load_config() -> Config {
         let get = |sec: &str, key: &str| sections.get(sec)?.get(key);
         
         if let Some(v) = get("poll",  "state_interval_ms") { if let Ok(n) = v.parse() { config.poll_state_interval_ms = n; } }
-        if let Some(v) = get("poll",  "track_interval_ms") { if let Ok(n) = v.parse() { config.poll_track_interval_ms = n; } }
+        if let Some(v) = get("mouse",  "track_interval_ms") { if let Ok(n) = v.parse() { config.poll_mouse_track_interval_ms = n; } }
+        if let Some(v) = get("caret",  "track_interval_ms") { if let Ok(n) = v.parse() { config.poll_caret_track_interval_ms = n; } }
         
         if let Some(v) = get("tray", "enable") { 
             match v.as_str() {
@@ -200,7 +204,6 @@ fn generate_toml_template() -> String {
     r##"# 输入指示器 (IME Indicator) 配置文件
 [poll]
 state_interval_ms = 100   # 状态检测间隔 (ms)
-track_interval_ms = 10    # 位置追踪间隔 (ms)
 
 [tray]
 enable = true               # 是否显示托盘图标 (false 时完全后台运行，只能通过任务管理器结束)
@@ -213,6 +216,7 @@ size = 8                    # 提示球大小
 offset_x = 0
 offset_y = 0
 show_en = true              # 英文状态下是否显示
+track_interval_ms = 50
 # 光标检测方法及落级顺序（可删减、可调序）
 # 可选: gui_info(记事本等原生) msaa_caret(caret 对象, VS Code/Edge)
 methods = ["gui_info", "msaa_caret"]
@@ -225,6 +229,7 @@ size = 8                    # 提示球大小
 offset_x = 2
 offset_y = 18
 show_en = true              # 英文状态下是否显示
+track_interval_ms = 10
 target_cursors = [32513, 32512]  # I-Beam, Normal
 "##.to_string()
 }
@@ -266,7 +271,8 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 pub fn get() -> &'static Config { CONFIG.get_or_init(load_config) }
 
 pub fn state_poll_interval_ms() -> u64 { get().poll_state_interval_ms }
-pub fn track_poll_interval_ms() -> u64 { get().poll_track_interval_ms }
+pub fn mouse_track_poll_interval_ms() -> u64 { get().poll_mouse_track_interval_ms }
+pub fn caret_track_interval_ms() -> u64 { get().poll_caret_track_interval_ms }
 pub fn tray_enable() -> bool { get().tray_enable }
 pub fn caret_enable() -> bool { get().caret_enable }
 pub fn caret_color_cn() -> u32 { get().caret_color_cn }
@@ -297,7 +303,7 @@ mod tests {
         poll.insert("state_interval_ms".to_string(), "200".to_string());
         user.insert("poll".to_string(), poll);
         let (merged, missing) = merge_template(&user);
-        assert_eq!(missing, 18); // 模板共 19 个键，补 18 个默认
+        assert_eq!(missing, 19); // 模板共 20 个键，补 19 个默认
         // 用户已有值保留
         assert!(merged.contains("state_interval_ms = 200"));
         // 缺失键补默认

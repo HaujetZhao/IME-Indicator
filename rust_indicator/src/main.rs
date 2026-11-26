@@ -144,7 +144,7 @@ fn run_mouse_follower(shared: Arc<SharedState>) {
                 }
             }
         }
-        std::thread::sleep(Duration::from_millis(config::track_poll_interval_ms()));
+        std::thread::sleep(Duration::from_millis(config::mouse_track_poll_interval_ms()));
     }
 }
 
@@ -168,9 +168,10 @@ fn run_detector_loop(shared: Arc<SharedState>) {
     };
 
     let state_interval = Duration::from_millis(config::state_poll_interval_ms());
-    let track_interval = Duration::from_millis(config::track_poll_interval_ms());
+    let caret_track_interval = Duration::from_millis(config::caret_track_interval_ms());
 
     let mut last_state_check_time = Instant::now();
+    let mut last_caret_track_time = Instant::now();
     let mut caret_active = false;
     let mut last_in_text = false;
     // A 段刚检测完的光标位置，B 段直接复用，避免同一拍重跑检测管线
@@ -233,17 +234,20 @@ fn run_detector_loop(shared: Arc<SharedState>) {
             fresh_caret_pos = caret_pos;
         }
 
-        // B. 追踪文本光标（优先复用 A 段同拍结果）
-        if config::caret_enable() && caret_active {
-            if let Some(ref overlay) = caret_overlay {
-                let pos = fresh_caret_pos.take().or_else(|| caret_detector.get_caret_pos());
-                if let Some((x, y, h)) = pos {
-                    overlay.update(x, y, shared.chinese.load(Ordering::SeqCst), h);
+        // B. 追踪文本光标（独立周期，优先复用 A 段同拍结果）
+        if now.duration_since(last_caret_track_time) >= caret_track_interval {
+            last_caret_track_time = now;
+            if config::caret_enable() && caret_active {
+                if let Some(ref overlay) = caret_overlay {
+                    let pos = fresh_caret_pos.take().or_else(|| caret_detector.get_caret_pos());
+                    if let Some((x, y, h)) = pos {
+                        overlay.update(x, y, shared.chinese.load(Ordering::SeqCst), h);
+                    }
                 }
             }
         }
 
-        std::thread::sleep(track_interval);
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
