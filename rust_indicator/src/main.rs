@@ -179,7 +179,7 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
             // Mouse 状态判断
             if config::mouse_enable() {
                 if let Some(ref overlay) = mouse_overlay {
-                    let target_cursor = cursor_detector.is_target_cursor();
+                    let target_cursor = cursor_detector.should_show_indicator();
                     let should_mouse = target_cursor && (chinese_mode || config::mouse_show_en());
                     if should_mouse != mouse_active {
                         mouse_active = should_mouse;
