@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, LoadIconW, IDI_APPLICATION};
 
-use caret_detector::CaretDetector;
+use caret_detector::{CaretDetector, CaretPos};
 use cursor_detector::CursorDetector;
 use ime_detector::is_chinese_mode;
 use overlay::IndicatorOverlay;
@@ -133,6 +133,8 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
     let mut caret_active = false;
     let mut mouse_active = false;
     let mut last_in_text = false;
+    // A 段刚检测完的光标位置，B 段直接复用，避免同一拍重跑检测管线
+    let mut fresh_caret_pos: Option<CaretPos> = None;
 
     // 主线程负责消息循环，子线程负责检测
     while running.load(Ordering::SeqCst) {
@@ -148,7 +150,9 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
             } else {
                 None
             };
-            let in_text = auto && caret_pos.is_some() && !caret_detector.focus_is_readonly_document();
+            // 只读文档判定（UIA COM）：有插入符才算一次，两处判断共用
+            let readonly_doc = caret_pos.is_some() && caret_detector.focus_is_readonly_document();
+            let in_text = auto && caret_pos.is_some() && !readonly_doc;
 
             // 自动切换：进入输入框切中文，离开切英文。
             // 只在翻转时动作一次，不持续强制——避免顶掉用户在输入框里的手动 Shift 切换
@@ -163,7 +167,7 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
                 if let Some(ref overlay) = caret_overlay {
                     // 可见性线（黑名单制）：位置有、且焦点不在只读正文中才显示
                     let should_caret = caret_pos.is_some()
-                        && !caret_detector.focus_is_readonly_document()
+                        && !readonly_doc
                         && (chinese_mode || config::caret_show_en());
                     if should_caret != caret_active {
                         caret_active = should_caret;
@@ -193,14 +197,16 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
             }
 
             last_state_check_time = now;
+            fresh_caret_pos = caret_pos;
         }
 
         // B. 坐标追踪
 
-        // 1. 追踪文本光标
+        // 1. 追踪文本光标（优先复用 A 段同拍结果）
         if config::caret_enable() && caret_active {
             if let Some(ref overlay) = caret_overlay {
-                if let Some((x, y, h)) = caret_detector.get_caret_pos() {
+                let pos = fresh_caret_pos.take().or_else(|| caret_detector.get_caret_pos());
+                if let Some((x, y, h)) = pos {
                     overlay.update(x, y, chinese_mode, h);
                 }
             }

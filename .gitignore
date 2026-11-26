@@ -17,3 +17,6 @@ python_indicator/.venv/
 *.rs.bk
 Thumbs.db
 desktop.ini
+
+# 回收站（按规则移入 .trash 的待删文件）
+.trash/

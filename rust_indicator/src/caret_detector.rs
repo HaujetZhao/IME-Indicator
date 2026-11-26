@@ -203,13 +203,12 @@ impl CaretDetector {
                 Ok(_) => {
                     // Chromium（VS Code/Electron）焦点离开文本后此对象仍报旧位置，
                     // 但会把自身标成 INVISIBLE——以状态位判定 caret 是否真的存在
-                    let invisible = acc
+                    let state = acc
                         .get_accState(&var_child)
                         .ok()
                         .and_then(|v| u32::try_from(&v).ok())
-                        .unwrap_or(0)
-                        & STATE_SYSTEM_INVISIBLE
-                        != 0;
+                        .unwrap_or(0);
+                    let invisible = state & STATE_SYSTEM_INVISIBLE != 0;
                     if invisible || (x == 0 && y == 0) {
                         return None;
                     }
