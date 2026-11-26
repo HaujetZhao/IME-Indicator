@@ -54,7 +54,7 @@ impl Default for Config {
             caret_enable: true,
             caret_color_cn: parse_color("#FF7800dd"),
             caret_color_en: parse_color("#0077ffdd"),
-            caret_size: 8,
+            caret_size: 9,
             caret_offset_x: 0,
             caret_offset_y: 0,
             caret_show_en: true,
@@ -64,9 +64,9 @@ impl Default for Config {
             mouse_enable: true,
             mouse_color_cn: parse_color("#FF7800dd"),
             mouse_color_en: parse_color("#0077ffdd"),
-            mouse_size: 8,
-            mouse_offset_x: 2,
-            mouse_offset_y: 18,
+            mouse_size: 9,
+            mouse_offset_x: 1,
+            mouse_offset_y: 22,
             mouse_show_en: true,
             mouse_target_cursors: vec![32513, 32512],
 
@@ -229,34 +229,34 @@ pub(crate) fn get_config_path() -> PathBuf {
 fn generate_toml_template() -> String {
     r##"# 输入指示器 (IME Indicator) 配置文件
 [poll]
-state_interval_ms = 100   # 状态检测间隔 (ms)
+state_interval_ms = 100
 
 [tray]
-enable = true               # 是否显示托盘图标 (false 时完全后台运行，只能通过任务管理器结束)
+enable = true
 
 [caret]
-enable = true               # 是否启用文本光标提示
-color_cn = "#FF7800dd"    # 中文状态颜色 (#RRGGBBAA)
-color_en = "#0077ffdd"    # 英文状态颜色
-size = 8                    # 提示球大小
+enable = true
+color_cn = "#FF7800dd"
+color_en = "#0077ffdd"
+size = 9
 offset_x = 0
 offset_y = 0
-show_en = true              # 英文状态下是否显示
+show_en = true
 track_interval_ms = 50
 # 光标检测方法及落级顺序（可删减、可调序）
 # 可选: gui_info(记事本等原生) msaa_caret(caret 对象, VS Code/Edge)
 methods = ["gui_info", "msaa_caret"]
 
 [mouse]
-enable = true               # 是否开启鼠标提示
-color_cn = "#FF7800dd"    # 中文状态颜色
-color_en = "#0077ffdd"    # 英文状态颜色
-size = 8                    # 提示球大小
-offset_x = 2
-offset_y = 18
-show_en = true              # 英文状态下是否显示
+enable = true
+color_cn = "#FF7800dd"
+color_en = "#0077ffdd"
+size = 9
+offset_x = 1
+offset_y = 22
+show_en = true
 track_interval_ms = 10
-target_cursors = [32513, 32512]  # I-Beam, Normal
+target_cursors = [32513, 32512]
 
 [autoswitch]
 enable = true   # 自动切换初始开关（运行时可用托盘菜单切换）
@@ -366,7 +366,7 @@ mod tests {
         assert!(merged.contains("state_interval_ms = 200"));
         // 缺失键补默认
         assert!(merged.contains("track_interval_ms = 10"));
-        assert!(merged.contains("enable = true               # 是否显示托盘图标"));
+        assert!(merged.contains("target_cursors = [32513, 32512]"));
     }
 
     #[test]
