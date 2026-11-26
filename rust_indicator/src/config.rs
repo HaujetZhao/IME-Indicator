@@ -59,7 +59,7 @@ impl Default for Config {
             caret_offset_y: 0,
             caret_show_en: true,
             // 实测（2026-09）：gui_info 覆盖记事本，msaa_caret 覆盖 VS Code/Edge
-            caret_methods: ["gui_info", "msaa_caret"]
+            caret_methods: ["gui_info", "msaa_caret", "uia_selection"]
                 .iter().map(|s| s.to_string()).collect(),
             mouse_enable: true,
             mouse_color_cn: parse_color("#FF7800dd"),
@@ -245,7 +245,8 @@ show_en = true
 track_interval_ms = 50
 # 光标检测方法及落级顺序（可删减、可调序）
 # 可选: gui_info(记事本等原生) msaa_caret(caret 对象, VS Code/Edge)
-methods = ["gui_info", "msaa_caret"]
+#       uia_selection(选区矩形右缘, Listary 等自绘控件)
+methods = ["gui_info", "msaa_caret", "uia_selection"]
 
 [mouse]
 enable = true

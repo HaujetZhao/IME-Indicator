@@ -36,6 +36,7 @@ pub type CaretPos = (i32, i32, i32);
 pub enum DetectionSource {
     GuiInfo,
     MsaaCaret,
+    UiaSelection,
     None,
 }
 
@@ -45,6 +46,7 @@ impl DetectionSource {
         match s {
             "gui_info" => Some(DetectionSource::GuiInfo),
             "msaa_caret" => Some(DetectionSource::MsaaCaret),
+            "uia_selection" => Some(DetectionSource::UiaSelection),
             _ => None,
         }
     }
@@ -118,6 +120,7 @@ impl CaretDetector {
             let pos = match method {
                 DetectionSource::GuiInfo => self.get_pos_via_gui_info(),
                 DetectionSource::MsaaCaret => self.get_pos_via_msaa_caret(),
+                DetectionSource::UiaSelection => self.get_pos_via_uia_selection(),
                 DetectionSource::None => None,
             };
             if let Some(pos) = pos {
@@ -217,6 +220,45 @@ impl CaretDetector {
                 }
                 Err(_) => None,
             }
+        }
+    }
+
+    /// 通过 UIA TextPattern 选区矩形获取光标位置（自绘控件兜底，如 Listary）。
+    /// 这类控件无系统光标：msaa_caret 对其恒报 INVISIBLE 零矩形；
+    /// 而 TextPattern.GetSelection 无选区时提供方返回整段文本的矩形，
+    /// 光标在文本末尾，故取右缘。
+    fn get_pos_via_uia_selection(&self) -> Option<CaretPos> {
+        use windows::Win32::System::Ole::{
+            SafeArrayAccessData, SafeArrayGetLBound, SafeArrayGetUBound, SafeArrayUnaccessData,
+        };
+        use windows::Win32::UI::Accessibility::{
+            IUIAutomationTextPattern, UIA_TextPatternId,
+        };
+
+        let automation = self.automation.as_ref()?;
+        unsafe {
+            let focused = automation.GetFocusedElement().ok()?;
+            let pattern = focused
+                .GetCurrentPattern(UIA_TextPatternId)
+                .ok()?
+                .cast::<IUIAutomationTextPattern>()
+                .ok()?;
+            let selection = pattern.GetSelection().ok()?;
+            if selection.Length().ok()? == 0 {
+                return None;
+            }
+            let rects = selection.GetElement(0).ok()?.GetBoundingRectangles().ok()?;
+            let lower = SafeArrayGetLBound(&*rects, 1).ok()?;
+            let upper = SafeArrayGetUBound(&*rects, 1).ok()?;
+            if upper - lower + 1 < 4 {
+                return None;
+            }
+            let mut p = std::ptr::null_mut();
+            SafeArrayAccessData(&*rects, &mut p).ok()?;
+            let d = std::slice::from_raw_parts(p as *const f64, 4);
+            let (l, t, w, h) = (d[0] as i32, d[1] as i32, d[2] as i32, d[3] as i32);
+            let _ = SafeArrayUnaccessData(&*rects);
+            Some((l + w, t, h))
         }
     }
 }
