@@ -119,6 +119,12 @@ fn load_config() -> Config {
             }
         }
 
+        // 缺项自动补全：exe 更新后老配置缺的新键，按默认值补写回文件（用户已有值原样保留）
+        let (merged, missing) = merge_template(&sections);
+        if missing > 0 {
+            let _ = fs::write(&path, merged);
+        }
+
         // 映射数据 (精简写法)
         let get = |sec: &str, key: &str| sections.get(sec)?.get(key);
         
@@ -223,6 +229,35 @@ target_cursors = [32513, 32512]  # I-Beam, Normal
 "##.to_string()
 }
 
+/// 以模板为骨架合并用户配置：模板里每个键，用户文件有值就用用户的，没有就保留模板默认行。
+/// 返回（合并后的文件内容，缺失键数）。用户文件里模板之外的键会被丢弃。
+fn merge_template(sections: &HashMap<String, HashMap<String, String>>) -> (String, usize) {
+    let mut out = String::new();
+    let mut missing = 0usize;
+    let mut cur_sec = String::new();
+    for line in generate_toml_template().lines() {
+        let t = line.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            cur_sec = t[1..t.len() - 1].to_lowercase();
+        }
+        if let Some((k, _)) = t.split_once('=') {
+            let key = k.trim().to_lowercase();
+            match sections.get(&cur_sec).and_then(|m| m.get(&key)) {
+                Some(user_val) => out.push_str(&format!("{} = {}\n", k.trim(), user_val)),
+                None => {
+                    missing += 1;
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    (out, missing)
+}
+
 // ============================================================================
 // 全局接口
 // ============================================================================
@@ -249,3 +284,24 @@ pub fn mouse_offset_x() -> i32 { get().mouse_offset_x }
 pub fn mouse_offset_y() -> i32 { get().mouse_offset_y }
 pub fn mouse_show_en() -> bool { get().mouse_show_en }
 pub fn mouse_target_cursors() -> &'static [u32] { &get().mouse_target_cursors }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_template() {
+        // 用户只配了两个键，其余全部缺失
+        let mut user = HashMap::new();
+        let mut poll = HashMap::new();
+        poll.insert("state_interval_ms".to_string(), "200".to_string());
+        user.insert("poll".to_string(), poll);
+        let (merged, missing) = merge_template(&user);
+        assert_eq!(missing, 18); // 模板共 19 个键，补 18 个默认
+        // 用户已有值保留
+        assert!(merged.contains("state_interval_ms = 200"));
+        // 缺失键补默认
+        assert!(merged.contains("track_interval_ms = 10"));
+        assert!(merged.contains("enable = true               # 是否显示托盘图标"));
+    }
+}
