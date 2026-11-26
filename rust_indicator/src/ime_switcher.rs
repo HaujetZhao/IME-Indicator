@@ -5,8 +5,6 @@
 //! 所以两条消息必须一起压。
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::Duration;
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
@@ -88,12 +86,4 @@ fn press(hwnd: HWND, chinese: bool) {
 /// 立即对当前焦点窗口生效（自动切换用，此时目标窗口就在前台）
 pub fn apply(chinese: bool) {
     press(focused_window(), chinese);
-}
-
-/// 延迟后对「当时的前台焦点窗口」生效（给用户留时间切窗口）
-pub fn switch_delayed(chinese: bool, delay: Duration) {
-    thread::spawn(move || {
-        thread::sleep(delay);
-        press(focused_window(), chinese);
-    });
 }

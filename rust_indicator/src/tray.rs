@@ -23,8 +23,6 @@ const IDM_RESTART: u32 = 1001;
 const IDM_CONFIG: u32 = 1002;
 const IDM_ABOUT: u32 = 1003;
 const IDM_EXIT: u32 = 1004;
-const IDM_SWITCH_CN: u32 = 1005;
-const IDM_SWITCH_EN: u32 = 1006;
 const IDM_TOGGLE_AUTO: u32 = 1007;
 
 pub struct TrayManager {
@@ -148,12 +146,6 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 IDM_CONFIG => {
                     open_config();
                 }
-                IDM_SWITCH_CN => {
-                    crate::ime_switcher::switch_delayed(true, std::time::Duration::from_secs(3));
-                }
-                IDM_SWITCH_EN => {
-                    crate::ime_switcher::switch_delayed(false, std::time::Duration::from_secs(3));
-                }
                 IDM_TOGGLE_AUTO => {
                     crate::ime_switcher::toggle_auto();
                 }
@@ -174,22 +166,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
 
 unsafe fn show_context_menu(hwnd: HWND) {
     let menu = CreatePopupMenu().unwrap();
-    let _ = windows::Win32::UI::WindowsAndMessaging::AppendMenuW(
-        menu,
-        windows::Win32::UI::WindowsAndMessaging::MF_STRING,
-        IDM_SWITCH_CN as usize,
-        w!("切中文 (3秒后生效)"),
-    );
-    let _ = windows::Win32::UI::WindowsAndMessaging::AppendMenuW(
-        menu,
-        windows::Win32::UI::WindowsAndMessaging::MF_STRING,
-        IDM_SWITCH_EN as usize,
-        w!("切英文 (3秒后生效)"),
-    );
     let auto_label = if crate::ime_switcher::auto_enabled() {
-        w!("关闭自动切换")
+        w!("自动切换：已开启")
     } else {
-        w!("打开自动切换")
+        w!("自动切换：已关闭")
     };
     let _ = windows::Win32::UI::WindowsAndMessaging::AppendMenuW(
         menu,
