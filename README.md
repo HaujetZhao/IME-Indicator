@@ -31,7 +31,7 @@
 
 ## 直接运行
 
-到 releases 界面下载 [已编译好的 exe](https://github.com/HaujetZhao/IME_Indicator/releases/latest/download/IME-Indicator.exe) 文件，双击运行即可。
+到 releases 界面下载 [已编译好的 exe](https://github.com/HaujetZhao/IME-Indicator/releases/latest/download/IME-Indicator.exe) 文件，双击运行即可。
 
 ## 自行编译 (Rust 版)
 
@@ -42,5 +42,5 @@
 
 ---
 作者：Antigravity & Haujet  
-GitHub: [https://github.com/HaujetZhao/IME_Indicator](https://github.com/HaujetZhao/IME_Indicator)
+GitHub: [https://github.com/HaujetZhao/IME-Indicator](https://github.com/HaujetZhao/IME-Indicator)
 
