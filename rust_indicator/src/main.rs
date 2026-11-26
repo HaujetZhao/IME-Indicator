@@ -4,6 +4,7 @@ mod caret_detector;
 mod config;
 mod cursor_detector;
 mod ime_detector;
+mod ime_switcher;
 mod overlay;
 mod tray;
 
@@ -131,6 +132,7 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
     let mut chinese_mode = false;
     let mut caret_active = false;
     let mut mouse_active = false;
+    let mut last_in_text = false;
 
     // 主线程负责消息循环，子线程负责检测
     while running.load(Ordering::SeqCst) {
@@ -140,11 +142,25 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
         if now.duration_since(last_state_check_time) >= state_interval {
             chinese_mode = is_chinese_mode();
 
+            let auto = ime_switcher::auto_enabled();
+            let caret_pos = if config::caret_enable() || auto {
+                caret_detector.get_caret_pos()
+            } else {
+                None
+            };
+            let in_text = auto && caret_pos.is_some() && !caret_detector.focus_is_readonly_document();
+
+            // 自动切换：进入输入框切中文，离开切英文。
+            // 只在翻转时动作一次，不持续强制——避免顶掉用户在输入框里的手动 Shift 切换
+            if auto && in_text != last_in_text {
+                last_in_text = in_text;
+                ime_switcher::apply(in_text);
+                chinese_mode = in_text;
+            }
+
             // Caret 状态判断
             if config::caret_enable() {
                 if let Some(ref overlay) = caret_overlay {
-                    let caret_pos = caret_detector.get_caret_pos();
-
                     // 可见性线（黑名单制）：位置有、且焦点不在只读正文中才显示
                     let should_caret = caret_pos.is_some()
                         && !caret_detector.focus_is_readonly_document()
