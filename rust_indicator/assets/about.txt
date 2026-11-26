@@ -2,6 +2,5 @@
 
 轻量级中英输入法状态实时提示工具。
 
-GitHub: https://github.com/HaujetZhao/IME_Indicator
+GitHub: https://github.com/HaujetZhao/IME-Indicator
 作者：Antigravity & Haujet
-版本：v0.3.0

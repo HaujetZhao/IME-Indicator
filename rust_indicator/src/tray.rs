@@ -255,7 +255,12 @@ fn open_config() {
 fn show_about() {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
-        let about_content = include_str!("../assets/about.txt");
+        // 版本行从 Cargo 版本号编译期取，避免 about.txt 里的版本过期
+        let about_content = format!(
+            "{}版本：v{}",
+            include_str!("../assets/about.txt"),
+            env!("CARGO_PKG_VERSION")
+        );
         let about_w: Vec<u16> = about_content.encode_utf16().chain(std::iter::once(0)).collect();
         let title = w!("关于 输入指示器");
         MessageBoxW(None, PCWSTR(about_w.as_ptr()), title, MB_ICONINFORMATION | MB_OK);
