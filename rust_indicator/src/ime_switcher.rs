@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, SendMessageTimeoutW,
     GUITHREADINFO, SMTO_ABORTIFHUNG,
@@ -78,35 +79,6 @@ pub fn app_allows() -> bool {
     crate::config::autoswitch_allows(&exe)
 }
 
-/// 前台 IME 是否处于开启状态（open=1）。
-/// ENG 美式键盘等纯键盘布局 open 恒为 0——此时不应自动切换（实测 ImmIsIME 区分不了）。
-pub fn ime_open() -> bool {
-    unsafe {
-        use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_IME_CONTROL,
-        };
-        const IMC_GETOPENSTATUS: usize = 0x5;
-
-        let hwnd = focused_window();
-        let ime_wnd = ImmGetDefaultIMEWnd(hwnd);
-        if ime_wnd.0.is_null() {
-            return false;
-        }
-        let mut result: usize = 0;
-        let ok = SendMessageTimeoutW(
-            ime_wnd,
-            WM_IME_CONTROL,
-            WPARAM(IMC_GETOPENSTATUS),
-            LPARAM(0),
-            SMTO_ABORTIFHUNG,
-            300,
-            Some(&mut result),
-        );
-        ok.0 != 0 && result != 0
-    }
-}
-
 /// 获取当前焦点窗口（与 ime_detector::get_focused_window 同逻辑）
 fn focused_window() -> HWND {
     unsafe {
@@ -151,18 +123,41 @@ fn ime_ctl(hwnd: HWND, imc: usize, value: usize) -> Option<usize> {
     }
 }
 
-fn press(hwnd: HWND, chinese: bool) {
-    // 中文：open+conv 一起压（新版微软拼音会忽略单发 SETOPENSTATUS(1)，缺一不可）；
-    // 英文：只压 conv 回非中文模式（Shift 的语义），open 不动，不把输入法整个关掉
-    if chinese {
-        ime_ctl(hwnd, IMC_SETOPENSTATUS, 1);
+/// 前台线程键盘布局是否英文语言（唯一可靠的「纯英文键盘、无 IME」信号：
+/// hkl=04090409 lang=0409；ImmIsIME 实测对英文键盘也返回 True，不可用；
+/// open/conv 也区分不了——微信输入法英文态 open=0 与英文键盘相同）。
+/// 只排除英文（主语言 0x009，覆盖 0409/0809/0C09 等全部 en-* 地区），
+/// 日语、韩语等其他 IME 照常放行
+pub fn foreground_lang_en() -> bool {
+    unsafe {
+        let fore = GetForegroundWindow();
+        if fore.0.is_null() {
+            return false;
+        }
+        let tid = GetWindowThreadProcessId(fore, None);
+        let lang = GetKeyboardLayout(tid).0 as usize as u32 & 0xFFFF;
+        lang & 0x3FF == 0x009
     }
-    let conv = ime_ctl(hwnd, IMC_GETCONVERSIONMODE, 0).unwrap_or(0);
-    let mode = if chinese { (conv & !3) | 1 } else { conv & !3 };
-    ime_ctl(hwnd, IMC_SETCONVERSIONMODE, mode);
 }
 
-/// 立即对当前焦点窗口生效（自动切换用，此时目标窗口就在前台）
+fn press(hwnd: HWND, chinese: bool) {
+    // 中文：open+conv 一起压（新版微软拼音会忽略单发 SETOPENSTATUS(1)，缺一不可）；
+    // 英文：只压 open=0——微信输入法的真开关就是 openstatus（其英文态 conv 不变），
+    // conv 只是 CUAS 假镜像，压了也白压
+    if chinese {
+        ime_ctl(hwnd, IMC_SETOPENSTATUS, 1);
+        let conv = ime_ctl(hwnd, IMC_GETCONVERSIONMODE, 0).unwrap_or(0);
+        ime_ctl(hwnd, IMC_SETCONVERSIONMODE, (conv & !3) | 1);
+    } else {
+        ime_ctl(hwnd, IMC_SETOPENSTATUS, 0);
+    }
+}
+
+/// 立即对当前焦点窗口生效（自动切换用，此时目标窗口就在前台）。
+/// 英文键盘布局下没有 IME 可切，直接跳过
 pub fn apply(chinese: bool) {
+    if foreground_lang_en() {
+        return;
+    }
     press(focused_window(), chinese);
 }

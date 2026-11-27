@@ -190,8 +190,9 @@ fn run_detector_loop(shared: Arc<SharedState>) {
             shared.chinese.store(chinese_mode, Ordering::SeqCst);
 
             let auto = ime_switcher::auto_enabled();
-            // app 过滤 + ENG 纯键盘布局（IME open=0）都不动作，只静默复位
-            let app_ok = auto && ime_switcher::app_allows() && ime_switcher::ime_open();
+            // app 过滤 + ENG 纯键盘布局（无 IME 可切）都不动作，只静默复位。
+            // 不能用 ime_open() 挡：微信等输入法英文态 open=0，会把自己切出的英文态挡死
+            let app_ok = auto && ime_switcher::app_allows() && !ime_switcher::foreground_lang_en();
             let caret_pos = if config::caret_enable() || auto {
                 caret_detector.get_caret_pos()
             } else {
