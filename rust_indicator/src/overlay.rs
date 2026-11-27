@@ -42,6 +42,7 @@ pub struct IndicatorOverlay {
     offset_x: i32,
     offset_y: i32,
     gdi_token: usize,
+    last_state: std::cell::Cell<Option<(i32, i32, bool, i32)>>,
 }
 
 impl IndicatorOverlay {
@@ -65,6 +66,7 @@ impl IndicatorOverlay {
             offset_x,
             offset_y,
             gdi_token,
+            last_state: std::cell::Cell::new(None),
         }
     }
 
@@ -141,6 +143,11 @@ impl IndicatorOverlay {
 
     /// 更新渲染内容和屏幕位置
     pub fn update(&self, x: i32, y: i32, is_chinese: bool, caret_h: i32) {
+        // 位置和状态都没变时跳过重绘
+        if self.last_state.get() == Some((x, y, is_chinese, caret_h)) {
+            return;
+        }
+
         let color = if is_chinese {
             self.color_cn
         } else {
@@ -223,6 +230,8 @@ impl IndicatorOverlay {
             let _ = DeleteObject(h_bitmap);
             let _ = DeleteDC(mem_dc);
             let _ = ReleaseDC(None, screen_dc);
+
+            self.last_state.set(Some((x, y, is_chinese, caret_h)));
 
             // 保持窗口在最顶层
             let _ = SetWindowPos(
