@@ -72,7 +72,7 @@ fn foreground_exe() -> Option<String> {
     }
 }
 
-/// 前台程序是否允许自动切换（按配置的 match/deny 过滤；查不到进程名时默认允许）
+/// 前台程序是否允许自动切换（按配置的 match/exclude 过滤；查不到进程名时默认允许）
 pub fn app_allows() -> bool {
     let Some(exe) = foreground_exe() else { return true };
     crate::config::autoswitch_allows(&exe)

@@ -201,14 +201,15 @@ fn run_detector_loop(shared: Arc<SharedState>) {
             let readonly_doc = caret_pos.is_some() && caret_detector.focus_is_readonly_document();
             let in_text = app_ok && caret_pos.is_some() && !readonly_doc;
 
-            // 自动切换：进入输入框切中文，离开切英文。
+            // 自动切换：进入输入框按 enter_chinese 配置切换，离开切英文。
             // 只在翻转时动作一次，不持续强制——避免顶掉用户在输入框里的手动 Shift 切换。
-            // 受限程序（match/deny 拒绝）里不动作，只静默复位，完全不碰它的输入法
+            // 受限程序（match/exclude 拒绝）里不动作，只静默复位，完全不碰它的输入法
             if in_text != last_in_text {
                 last_in_text = in_text;
                 if app_ok {
-                    ime_switcher::apply(in_text);
-                    shared.chinese.store(in_text, Ordering::SeqCst);
+                    let target = in_text && config::autoswitch_enter_cn();
+                    ime_switcher::apply(target);
+                    shared.chinese.store(target, Ordering::SeqCst);
                 }
             }
 

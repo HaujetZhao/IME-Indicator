@@ -38,10 +38,12 @@ pub struct Config {
 
     /// 自动切换：启动时开关（运行时由托盘菜单切换）
     pub autoswitch_enable: bool,
+    /// 进入输入框时切换的目标："cn" 中文 / "en" 英文（离开时恒切英文）
+    pub autoswitch_enter: String,
     /// 匹配列表（通配符），空 = 不匹配任何程序
     pub autoswitch_match: Vec<String>,
-    /// 拒绝列表（通配符），命中则该程序不自动切换
-    pub autoswitch_deny: Vec<String>,
+    /// 排除列表（通配符），命中则该程序不自动切换
+    pub autoswitch_exclude: Vec<String>,
 }
 
 impl Default for Config {
@@ -71,8 +73,9 @@ impl Default for Config {
             mouse_target_cursors: vec![32513, 32512],
 
             autoswitch_enable: true,
+            autoswitch_enter: "cn".to_string(),
             autoswitch_match: vec!["*".to_string()],
-            autoswitch_deny: Vec::new(),
+            autoswitch_exclude: Vec::new(),
         }
     }
 }
@@ -211,7 +214,10 @@ fn load_config() -> Config {
                 _ => {}
             }
         }
-        for (key, dest) in [("match", &mut config.autoswitch_match), ("deny", &mut config.autoswitch_deny)] {
+        if let Some(v) = get("autoswitch", "enter") {
+            config.autoswitch_enter = v.trim_matches('"').to_lowercase();
+        }
+        for (key, dest) in [("match", &mut config.autoswitch_match), ("exclude", &mut config.autoswitch_exclude)] {
             if let Some(v) = get("autoswitch", key) {
                 *dest = v.trim_matches(|c| c == '[' || c == ']')
                     .split(',').map(|s| s.trim().trim_matches('"').to_lowercase())
@@ -260,9 +266,10 @@ track_interval_ms = 10
 target_cursors = [32513, 32512]
 
 [autoswitch]
-enable = true   # 自动切换初始开关（运行时可用托盘菜单切换）
-match = ["*"]   # 匹配列表，支持通配符（* 任意段，? 单字符）
-deny = []       # 拒绝列表，同样支持通配符；命中则该程序不做自动切换
+enable = true          # 自动切换初始开关（运行时可用托盘菜单切换）
+enter = "cn"           # 进入输入框时切 "cn" 中文 / "en" 英文（离开时恒切英文）
+match = ["*"]          # 匹配列表，支持通配符（* 任意段，? 单字符）
+exclude = []           # 排除列表，同样支持通配符；命中则该程序不做自动切换
 "##.to_string()
 }
 
@@ -324,7 +331,8 @@ pub fn mouse_show_en() -> bool { get().mouse_show_en }
 pub fn mouse_target_cursors() -> &'static [u32] { &get().mouse_target_cursors }
 pub fn autoswitch_enable() -> bool { get().autoswitch_enable }
 pub fn autoswitch_match() -> &'static [String] { &get().autoswitch_match }
-pub fn autoswitch_deny() -> &'static [String] { &get().autoswitch_deny }
+pub fn autoswitch_enter_cn() -> bool { get().autoswitch_enter == "cn" }
+pub fn autoswitch_exclude() -> &'static [String] { &get().autoswitch_exclude }
 
 /// 通配符匹配：* 任意段，? 单字符，大小写不敏感
 pub fn glob_match(pattern: &str, text: &str) -> bool {
@@ -339,15 +347,15 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     rec(pattern.to_lowercase().as_bytes(), text.to_lowercase().as_bytes())
 }
 
-/// 自动切换的按程序过滤（纯逻辑）：进程名需命中 match（空列表 = 不匹配任何程序）且不命中 deny
-pub fn list_allows(exe: &str, match_list: &[String], deny_list: &[String]) -> bool {
-    !deny_list.iter().any(|p| glob_match(p, exe))
+/// 自动切换的按程序过滤（纯逻辑）：进程名需命中 match（空列表 = 不匹配任何程序）且不命中 exclude
+pub fn list_allows(exe: &str, match_list: &[String], exclude_list: &[String]) -> bool {
+    !exclude_list.iter().any(|p| glob_match(p, exe))
         && match_list.iter().any(|p| glob_match(p, exe))
 }
 
 /// 按当前配置过滤前台程序
 pub fn autoswitch_allows(exe: &str) -> bool {
-    list_allows(exe, autoswitch_match(), autoswitch_deny())
+    list_allows(exe, autoswitch_match(), autoswitch_exclude())
 }
 
 #[cfg(test)]
@@ -362,7 +370,7 @@ mod tests {
         poll.insert("state_interval_ms".to_string(), "200".to_string());
         user.insert("poll".to_string(), poll);
         let (merged, missing) = merge_template(&user);
-        assert_eq!(missing, 22); // 模板共 23 个键，补 22 个默认
+        assert_eq!(missing, 23); // 模板共 24 个键，补 23 个默认
         // 用户已有值保留
         assert!(merged.contains("state_interval_ms = 200"));
         // 缺失键补默认
